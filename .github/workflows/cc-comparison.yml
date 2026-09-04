@@ -1,0 +1,55 @@
+name: CC comparison (incl. BBR)
+
+# Docker Desktop's LinuxKit VM (used for local dev on macOS/Windows) does not
+# ship the tcp_bbr kernel module -- see README.md "Known limitation" section.
+# GitHub-hosted ubuntu-latest runners are real Linux hosts with BBR available,
+# so this workflow is how the project gets a real BBR number without anyone
+# installing or maintaining a VM. Trigger manually from the Actions tab, or
+# it runs automatically on every push to main.
+
+"on":
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  cc-comparison:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Confirm BBR is available on this runner's real kernel
+        run: |
+          sudo modprobe tcp_bbr
+          sudo sysctl -w net.core.default_qdisc=fq
+          echo "Available congestion control algorithms:"
+          sysctl net.ipv4.tcp_available_congestion_control
+          # Fail fast with a clear message if a future runner image ever drops BBR
+          grep -q bbr /proc/sys/net/ipv4/tcp_available_congestion_control
+
+      - name: Build the stack
+        run: docker compose build
+
+      - name: Bring up the testbed
+        run: |
+          docker compose up -d
+          sleep 2
+          docker compose exec attacker ping -c 2 server
+
+      - name: Run CC comparison (cubic, reno, bbr)
+        run: |
+          ./scripts/test_streaming.sh cubic 10
+          ./scripts/test_streaming.sh reno  10
+          ./scripts/test_streaming.sh bbr   10
+          echo "--- results ---"
+          cat data/streaming_results.csv
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: streaming-results
+          path: data/streaming_results.csv
+
+      - name: Tear down
+        if: always()
+        run: docker compose down

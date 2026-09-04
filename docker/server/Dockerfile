@@ -15,4 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /work
-CMD ["sleep", "infinity"]
+COPY server/stream_server.c /work/stream_server.c
+RUN gcc -O2 -Wall -o /work/stream_server /work/stream_server.c
+
+CMD ["/work/stream_server", "5000"]

@@ -12,6 +12,8 @@ services:
       dockerfile: docker/server/Dockerfile
     container_name: server
     hostname: server
+    environment:
+      - CC_ALGO=${CC_ALGO:-cubic}
     cap_add:
       - NET_ADMIN
     networks:
