@@ -1,0 +1,56 @@
+networks:
+  labnet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: docker/server/Dockerfile
+    container_name: server
+    hostname: server
+    cap_add:
+      - NET_ADMIN
+    networks:
+      labnet:
+        ipv4_address: 172.28.0.10
+    volumes:
+      - ./data:/data
+    tty: true
+    stdin_open: true
+
+  attacker:
+    build:
+      context: .
+      dockerfile: docker/attacker/Dockerfile
+    container_name: attacker
+    hostname: attacker
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    networks:
+      labnet:
+        ipv4_address: 172.28.0.20
+    volumes:
+      - ./data:/data
+    tty: true
+    stdin_open: true
+
+  observer:
+    build:
+      context: .
+      dockerfile: docker/observer/Dockerfile
+    container_name: observer
+    hostname: observer
+    cap_add:
+      - NET_ADMIN
+    networks:
+      labnet:
+        ipv4_address: 172.28.0.30
+    volumes:
+      - ./data:/data
+    tty: true
+    stdin_open: true
