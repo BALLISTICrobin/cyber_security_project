@@ -41,7 +41,7 @@ jobs:
 
       - name: Run the M2 attack gate (CUBIC, 15s, delay 20ms, loss 2%)
         run: |
-          CC_ALGO=cubic ./scripts/run_attack.sh 15 20 2
+          CC_ALGO=cubic bash ./scripts/run_attack.sh 15 20 2
           echo "--- results ---"
           cat data/attack_results.csv
 
