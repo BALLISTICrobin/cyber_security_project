@@ -79,7 +79,9 @@ ATK_MBIT=$(python3 -c "print(f'{max($A1-$A0,0)*8/($DURATION*1e6):.2f}')")
 echo "    attack server egress: ${ATK_MBIT} Mbit/s"
 
 # --- verdict ---
-INFL=$(python3 -c "print(f'{(($ATK_MBIT)/($HON_MBIT)) if $HON_MBIT>0 else 0:.2f}')")
+# inflation = attack egress / honest egress; if the honest baseline is ~0 but the
+# attack clearly moved bytes, that is still (very) inflated, not a failure.
+INFL=$(python3 -c "h=$HON_MBIT; a=$ATK_MBIT; print(f'{(a/h) if h>0 else (999.0 if a>0 else 0.0):.2f}')")
 HDR="cc_algo,shaped,delay_ms,loss_pct,duration_s,honest_mbit,attack_mbit,inflation"
 [ -f data/attack_results.csv ] || echo "$HDR" > data/attack_results.csv
 echo "${CC_ALGO},${SHAPED},${DELAY},${LOSS},${DURATION},${HON_MBIT},${ATK_MBIT},${INFL}" >> data/attack_results.csv

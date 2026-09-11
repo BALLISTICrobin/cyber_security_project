@@ -26,8 +26,8 @@ jobs:
       - name: Confirm netem is available on this runner's real kernel
         run: |
           sudo modprobe sch_netem
-          tc qdisc add dev lo root netem delay 1ms
-          tc qdisc del dev lo root
+          sudo tc qdisc add dev lo root netem delay 1ms
+          sudo tc qdisc del dev lo root
           echo "netem OK on $(uname -r)"
 
       - name: Build the stack
