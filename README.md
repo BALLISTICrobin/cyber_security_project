@@ -294,6 +294,68 @@ on `ubuntu-latest` and uploads `sweep_results.json` and the three figures as the
 `m3-sweep` artifact. Run locally without `netem` and `sweep.py` reports a
 correctness-only pass (the matrix executes but the ratios are not meaningful).
 
+## Milestone 4 — defense: Sherwood randomly-skipped-segment test
+
+`server/defense_server.c` is a streaming server that catches a lying receiver
+directly. Every so often it **skips** a segment — it advances its send sequence
+past a small gap without transmitting those bytes — and remembers the hole:
+
+- an **honest** receiver never got the skipped bytes, so its cumulative ACK
+  cannot advance past the hole; it stalls there until the server retransmits
+  (which it does after a short grace period, so honest clients are never harmed);
+- a **misbehaving optimistic** receiver acknowledges data it never received, so
+  it ACKs straight past the hole — impossible for an honest peer. The server
+  logs it and RSTs the flow.
+
+Because it has to control its own TCP sequence numbers to leave a hole (a normal
+kernel socket cannot), it is a raw-socket server, selected with `DEFENSE=on`
+(needs `NET_ADMIN` + `NET_RAW` + iptables, all in `docker-compose.yml`). Unlike
+M2/M3 it needs no `netem` or `tcp_bbr`, so the whole gate runs on Docker Desktop.
+
+### Running it
+
+```bash
+DEFENSE=on docker compose up -d --force-recreate server   # skip-test server
+docker compose exec attacker /work/attack --target server --port 5000 --sack   # detected + reset
+docker compose exec observer sh -c "nc server 5000 | wc -c"                      # honest: fine
+```
+
+### Verification gate
+
+```bash
+./scripts/run_defense.sh 8
+```
+
+This runs three phases — attacker with the defense off (unchecked baseline),
+attacker with it on (detected and reset), and an honest client with it on
+(completes, not flagged).
+
+**Pass criteria (M4 definition of done):** the attack is detected and reset, the
+attacker's throughput collapses versus the unchecked baseline, and the honest
+client transfers normally without being flagged.
+
+**Actual measured result (this project's Docker Desktop host):**
+
+| Phase | Result |
+|---|---|
+| Attacker, defense off | ≈1083 Mbit/s (streams freely) |
+| Attacker, defense on | ≈2.5 Mbit/s — **detected on a skipped segment, flow reset** |
+| Honest client, defense on | ≈14.7 MB transferred, **0 detections** |
+
+[`.github/workflows/m4-defense.yml`](.github/workflows/m4-defense.yml) runs the
+same gate on `ubuntu-latest`.
+
+### Note on the eBPF/XDP detector (bonus)
+
+The plan also lists an eBPF/XDP ACK-anomaly detector for the bonus. Note that the
+realistic attack here acknowledges data the server *did* send but that was
+dropped downstream, so a naive "ACK beyond snd_nxt" check does not catch it (the
+kernel already rejects those) — the deliberate skip-test above is what exposes
+the lie. An in-kernel version of the same skip-and-detect logic (tc-BPF on the
+server, whose `clsact` hook is available here) is the natural bonus extension;
+its overhead number must be measured on bare metal, since eBPF runs in generic
+mode inside Docker (see `PROJECT_IMPLEMENTATION_PLAN.md`, §1).
+
 ## Tear down
 
 ```bash
@@ -302,5 +364,5 @@ docker compose down
 
 ## Next milestone
 
-M4 — defenses: Sherwood randomly-skipped-segment test + an eBPF/XDP ACK-anomaly
-detector, with before/after evidence. See `PROJECT_IMPLEMENTATION_PLAN.md`.
+M5 — reproducibility package (one-command re-run of every gate), fixed seeds,
+final report, and the live demo. See `PROJECT_IMPLEMENTATION_PLAN.md`.

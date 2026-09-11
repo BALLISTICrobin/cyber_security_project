@@ -1,0 +1,35 @@
+name: Skip-test defense gate (M4)
+
+# The Milestone 4 defense (Sherwood randomly-skipped-segment test) needs no
+# special kernel features -- just raw sockets and iptables, both available in
+# the containers -- so unlike M2/M3 it also runs correctly on Docker Desktop.
+# This workflow runs the same before/after gate on ubuntu-latest for the record.
+#
+# PASS = with the defense on, the optimistic-ACK attacker is detected on a
+# skipped segment and reset (throughput cut to near zero), while an honest
+# kernel-TCP client completes normally and is never flagged.
+
+"on":
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  defense:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and bring up the testbed
+        run: |
+          docker compose build
+          docker compose up -d
+          sleep 2
+          docker compose exec -T attacker ping -c 2 server
+
+      - name: Run the M4 defense gate (attack detected, honest client unharmed)
+        run: bash ./scripts/run_defense.sh 8
+
+      - name: Tear down
+        if: always()
+        run: docker compose down

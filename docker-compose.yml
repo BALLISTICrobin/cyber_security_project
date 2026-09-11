@@ -14,8 +14,10 @@ services:
     hostname: server
     environment:
       - CC_ALGO=${CC_ALGO:-cubic}
+      - DEFENSE=${DEFENSE:-off}
     cap_add:
       - NET_ADMIN
+      - NET_RAW
     networks:
       labnet:
         ipv4_address: 172.28.0.10
