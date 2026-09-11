@@ -213,6 +213,17 @@ cap to model link capacity).
 - The server's egress under attack is **≥ 3× the honest baseline** over the same
   shaped path. Result is appended to `data/attack_results.csv`.
 
+**Actual measured result (CI, `ubuntu-latest`, CUBIC, 20 ms / 2% loss):**
+
+| Metric | Honest | Under attack |
+|---|---|---|
+| Server egress | 6.17 Mbit/s | 113.48 Mbit/s |
+| Amplification | — | **18.39×** (gate ≥ 3×) → **PASS** |
+
+The `ss -ti` snapshot mid-attack shows the signature exactly: `cwnd:177` held
+wide open while `ssthresh:2` records that CUBIC *wanted* to collapse the window
+after loss — the optimistic ACKs simply never let it.
+
 ### ⚠️ Same kernel limitation as BBR: no `netem` on Docker Desktop
 
 Traffic shaping is what makes the gate meaningful, and Docker Desktop's LinuxKit
@@ -231,6 +242,49 @@ runs the same `run_attack.sh` gate on a GitHub-hosted `ubuntu-latest` runner
 **Actions** tab (or it runs on push to `main`); the inflation number lands in
 the run's **Artifacts** as `attack-results/attack_results.csv`.
 
+## Milestone 3 — CC × timestamps × SACK sweep + dashboard
+
+`scripts/sweep.py` runs the attack across the full matrix of congestion-control
+algorithm (Reno / CUBIC / BBR) × TCP timestamps (on/off) × SACK (on/off). For
+each algorithm it first measures an honest kernel-TCP baseline over the same
+shaped path, then runs the attack once per (timestamps, SACK) setting and records
+the egress amplification and peak congestion window to `data/sweep_results.json`.
+
+The attacker now supports the extra dimensions: `--timestamps` negotiates TCP
+timestamps and echoes the server's `TSval` correctly (so PAWS does not drop the
+forged ACKs), and `--sack` offers SACK-permitted. `--log FILE` writes a periodic
+`delivered,acknowledged` time-series — the raw material for the "optimistic gap"
+figure.
+
+`scripts/plot_sweep.py` turns the results into three black-and-white figures
+(`data/fig_amplification.png`, `data/fig_peak_cwnd.png`, `data/fig_gap.png`):
+amplification by algorithm, peak congestion window (attack vs honest), and
+acknowledged-vs-genuinely-delivered bytes over time. These double as the report's
+dashboard figures.
+
+### Running it
+
+```bash
+SWEEP_DURATION=10 python3 scripts/sweep.py       # writes data/sweep_results.json
+python3 scripts/plot_sweep.py                    # needs matplotlib; writes data/*.png
+```
+
+### Verification gate
+
+- `data/sweep_results.json` has one row per (cc, timestamps, sack) combination.
+- CUBIC and Reno show large amplification (their windows trust ACKs and inflate
+  without bound); **BBR stays bounded** — it paces from a bandwidth/RTT model, so
+  faked ACKs buy far less, consistent with the aBBRate finding.
+
+### Same kernel note as M2
+
+The sweep needs `netem` **and** the `tcp_bbr` module, so — like the M2 gate and
+the BBR comparison — the real numbers come from CI, not Docker Desktop.
+[`.github/workflows/m3-sweep.yml`](.github/workflows/m3-sweep.yml) runs the sweep
+on `ubuntu-latest` and uploads `sweep_results.json` and the three figures as the
+`m3-sweep` artifact. Run locally without `netem` and `sweep.py` reports a
+correctness-only pass (the matrix executes but the ratios are not meaningful).
+
 ## Tear down
 
 ```bash
@@ -239,6 +293,5 @@ docker compose down
 
 ## Next milestone
 
-M3 — multi-CC matrix (Reno/CUBIC/BBR) + live dashboard, quantifying how the same
-attack is unbounded on CUBIC/Reno but bounded on BBR. See
-`PROJECT_IMPLEMENTATION_PLAN.md`.
+M4 — defenses: Sherwood randomly-skipped-segment test + an eBPF/XDP ACK-anomaly
+detector, with before/after evidence. See `PROJECT_IMPLEMENTATION_PLAN.md`.

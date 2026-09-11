@@ -1,0 +1,74 @@
+name: CC x timestamps x SACK sweep (M3)
+
+# The Milestone 3 sweep quantifies how the optimistic-ACK attack amplifies egress
+# across Reno / CUBIC / BBR with TCP timestamps and SACK on and off. It needs a
+# real Linux kernel: netem for shaping and the tcp_bbr module for the BBR rows --
+# neither exists on Docker Desktop's LinuxKit VM (see README.md). GitHub-hosted
+# ubuntu-latest runners have both, so this is where the real matrix comes from.
+#
+# PASS = CUBIC and Reno amplify by >= 3x on average and BBR stays below them
+# (bounded), matching the aBBRate finding. Results and figures are uploaded as
+# artifacts. Trigger from the Actions tab, or on push to main.
+
+"on":
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable BBR + netem on the runner's real kernel
+        run: |
+          sudo modprobe tcp_bbr
+          sudo modprobe sch_netem
+          sudo sysctl -w net.core.default_qdisc=fq
+          grep -q bbr /proc/sys/net/ipv4/tcp_available_congestion_control
+          echo "kernel $(uname -r): bbr + netem OK"
+
+      - name: Build and bring up the testbed
+        run: |
+          docker compose build
+          docker compose up -d
+          sleep 2
+          docker compose exec -T attacker ping -c 2 server
+
+      - name: Run the sweep (Reno/CUBIC/BBR x timestamps x SACK)
+        run: |
+          SWEEP_DURATION=10 python3 scripts/sweep.py
+          echo "--- sweep_results.json ---"
+          cat data/sweep_results.json
+
+      - name: Capture a CUBIC attack time-series (for the gap figure)
+        run: |
+          CC_ALGO=cubic docker compose up -d --force-recreate server
+          sleep 1
+          docker compose exec -T server tc qdisc del dev eth0 root 2>/dev/null || true
+          docker compose exec -T server tc qdisc add dev eth0 root \
+            netem delay 20ms loss 2% limit 100000
+          docker compose exec -T attacker /work/attack --target server --port 5000 \
+            --duration 12 --log /data/attack_timeseries.csv
+
+      - name: Render the dashboard figures
+        run: |
+          python3 -m pip install --quiet matplotlib
+          python3 scripts/plot_sweep.py
+
+      - name: Upload sweep results + figures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m3-sweep
+          path: |
+            data/sweep_results.json
+            data/attack_timeseries.csv
+            data/fig_amplification.png
+            data/fig_peak_cwnd.png
+            data/fig_gap.png
+
+      - name: Tear down
+        if: always()
+        run: docker compose down

