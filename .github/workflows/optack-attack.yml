@@ -1,0 +1,57 @@
+name: Optimistic-ACK attack gate (M2)
+
+# The Milestone 2 gate needs a real Linux kernel with `netem` traffic shaping.
+# Docker Desktop's LinuxKit VM (local dev on macOS/Windows) ships no netem, tbf
+# or ifb qdiscs at all -- the same class of limitation as the missing tcp_bbr
+# module (see README.md). GitHub-hosted ubuntu-latest runners are real Linux
+# hosts, so this workflow is how the project gets the real optimistic-ACK
+# inflation number. Trigger it from the Actions tab, or on every push to main.
+#
+# It shapes the server's egress into a lossy, delayed path, then compares the
+# server's egress rate under an honest kernel-TCP client against the same
+# server under the optimistic-ACK attack. PASS = the attack inflates the
+# server's egress by at least 3x (the M2 definition of done).
+
+"on":
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  optack-attack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Confirm netem is available on this runner's real kernel
+        run: |
+          sudo modprobe sch_netem
+          tc qdisc add dev lo root netem delay 1ms
+          tc qdisc del dev lo root
+          echo "netem OK on $(uname -r)"
+
+      - name: Build the stack
+        run: docker compose build
+
+      - name: Bring up the testbed
+        run: |
+          docker compose up -d
+          sleep 2
+          docker compose exec -T attacker ping -c 2 server
+
+      - name: Run the M2 attack gate (CUBIC, 15s, delay 20ms, loss 2%)
+        run: |
+          CC_ALGO=cubic ./scripts/run_attack.sh 15 20 2
+          echo "--- results ---"
+          cat data/attack_results.csv
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: attack-results
+          path: data/attack_results.csv
+
+      - name: Tear down
+        if: always()
+        run: docker compose down

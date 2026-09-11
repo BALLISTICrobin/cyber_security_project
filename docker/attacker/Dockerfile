@@ -13,7 +13,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     build-essential \
     gdb \
+    iptables \
+    netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /work
+COPY attacker/optack.c /work/optack.c
+COPY attacker/optack_proto.py /work/optack_proto.py
+RUN gcc -O2 -Wall -o /work/attack /work/optack.c
+
 CMD ["sleep", "infinity"]

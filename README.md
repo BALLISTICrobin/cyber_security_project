@@ -157,6 +157,80 @@ shaping. Get this backwards (as the first draft of this script did) and you'll s
 multi-hundred-Mbit/s throughput on what should be a 10 Mbit/s link, with no error to
 tell you why.
 
+## Milestone 2 — optimistic-ACK attack (CUBIC)
+
+`attacker/optack.c` is a raw-socket optimistic-ACK attack tool (compiled to
+`/work/attack` in the attacker image). It is a misbehaving TCP *receiver*: it
+opens a connection to the server and then acknowledges data before — or without
+ever — receiving it, so the server's CUBIC congestion control sees a
+near-zero-RTT, loss-free path, inflates its window without bound, and pours far
+more traffic onto the wire than the path can carry (Savage 1999 / Sherwood 2005).
+
+Design highlights (see `PROJECT_IMPLEMENTATION_PLAN.md`, §1 and §M2):
+
+- **The whole connection, including the handshake, is driven from the raw
+  socket.** The host kernel never has a TCB for the 4-tuple, so there is no
+  kernel-vs-tool conflict. Because the kernel would otherwise RST the server's
+  SYN-ACK (no socket owns the source port), the tool installs an `iptables`
+  rule that drops outbound RSTs to the server for the run and removes it on exit
+  (needs `NET_ADMIN`; raw send needs `NET_RAW` — both are in `docker-compose.yml`).
+- **Optimism is self-tuning (AIMD), not a fixed prediction.** The tool tracks
+  how far ahead of genuinely-received data it can acknowledge: it grows that
+  lead while the server keeps sending, and halves it the moment the flow stalls
+  (its ACKs overran the server's send pointer). This is Sherwood's opportunistic
+  ACK with overrun recovery, and it cannot dead-lock — a fixed-rate predictor can.
+- `attacker/optack_proto.py` is the Scapy prototype (M2 stage 1) that validates
+  the packet format and handshake before the fast C tool.
+
+### Running it
+
+```bash
+docker compose exec attacker /work/attack --target server --port 5000 --duration 15
+docker compose exec attacker /work/attack --target server --port 5000 --lazy   # fallback variant
+docker compose exec server ss -tin dst attacker      # watch cwnd/rtt during the run
+```
+
+### Verification gate
+
+```bash
+CC_ALGO=cubic ./scripts/run_attack.sh 15 20 2        # duration_s delay_ms loss_pct
+```
+
+This shapes the server's egress into a **lossy, delayed path** (netem
+`delay 20ms loss 2%`, no rate cap), measures the server's egress under an honest
+kernel-TCP client, then under the attack, and reports the inflation factor.
+
+**Why loss + delay and not a rate cap:** the attack only matters where honest
+CUBIC would back off but the attacker does not. A `rate` cap on the server's
+*own* egress instead creates local back-pressure that stalls the server's send
+pointer and hides the effect, so it is deliberately not used here (this is a
+different measurement from the M0/M1 baseline, which intentionally used a rate
+cap to model link capacity).
+
+**Pass criteria (M2 definition of done):**
+- `ss -ti` on the server shows the congestion window climbing far past its
+  normal ceiling and the RTT collapsing toward zero during the attack.
+- The server's egress under attack is **≥ 3× the honest baseline** over the same
+  shaped path. Result is appended to `data/attack_results.csv`.
+
+### ⚠️ Same kernel limitation as BBR: no `netem` on Docker Desktop
+
+Traffic shaping is what makes the gate meaningful, and Docker Desktop's LinuxKit
+kernel ships **no `netem` (or `tbf`/`ifb`) qdisc and no loadable modules at
+all** — confirmed on this project's dev machine. On such a host,
+`run_attack.sh` detects the missing qdisc and runs a **correctness-only** pass:
+the tool is exercised end-to-end (handshake, accepted optimistic ACKs, an
+inflated `cwnd` visible in `ss -ti`, clean teardown), but the honest-vs-attack
+ratio is not a pass/fail gate there — with no bottleneck to hide, optimism has
+nothing to gain and the ratio is meaningless.
+
+The real inflation number comes from CI, exactly like the BBR number:
+[`.github/workflows/optack-attack.yml`](.github/workflows/optack-attack.yml)
+runs the same `run_attack.sh` gate on a GitHub-hosted `ubuntu-latest` runner
+(a real kernel with `netem`), spun up and discarded per run. Trigger it from the
+**Actions** tab (or it runs on push to `main`); the inflation number lands in
+the run's **Artifacts** as `attack-results/attack_results.csv`.
+
 ## Tear down
 
 ```bash
@@ -165,5 +239,6 @@ docker compose down
 
 ## Next milestone
 
-M2 — working optimistic-ACK attack against `cubic` (raw-socket C tool). See
+M3 — multi-CC matrix (Reno/CUBIC/BBR) + live dashboard, quantifying how the same
+attack is unbounded on CUBIC/Reno but bounded on BBR. See
 `PROJECT_IMPLEMENTATION_PLAN.md`.
