@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Optimistic TCP ACK Attack — Simulation</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>Optimistic TCP ACK Attack <span class="muted">— live simulation</span></h1>
+  <p class="muted small">
+    Educational only. Drives your own isolated Docker testbed (<code>server</code> /
+    <code>attacker</code> / <code>observer</code>) with the project's real attack and
+    defense tools — nothing here is a canned recording.
+  </p>
+</header>
+
+<main>
+
+  <section class="panel topo-panel">
+    <h2>Network view</h2>
+    <svg id="topo-svg" viewBox="0 0 900 210" preserveAspectRatio="xMidYMid meet">
+      <line x1="90" y1="130" x2="450" y2="130" class="wire"></line>
+      <line x1="450" y1="130" x2="810" y2="130" class="wire"></line>
+      <circle cx="90" cy="55" r="32" class="node-bg attacker-node"></circle>
+      <image href="/static/images/attacker.svg" x="66" y="31" width="48" height="48"></image>
+      <text x="90" y="100" class="node-caption">attacker</text>
+      <circle cx="450" cy="55" r="36" class="node-bg server-node"></circle>
+      <image href="/static/images/server.svg" x="422" y="27" width="56" height="56"></image>
+      <text x="450" y="104" class="node-caption">server (victim)</text>
+      <circle cx="810" cy="55" r="32" class="node-bg observer-node"></circle>
+      <image href="/static/images/observer.svg" x="786" y="31" width="48" height="48"></image>
+      <text x="810" y="100" class="node-caption">observer (honest)</text>
+    </svg>
+    <p class="legend small">
+      <span class="swatch" style="background:#c1292e"></span> data → attacker
+      <span class="swatch" style="background:#13315c"></span> data → observer
+      <span class="swatch" style="background:#e8871e"></span> ACKs (upper lane = data packets, lower lane = ACKs;
+      packet speed/density reflects real live throughput and RTT — the attacker's ACK dots are deliberately fast
+      and constant, visualizing the "near-zero RTT" lie the attack tells the server)
+    </p>
+    <p class="small muted attribution">Icons: <a href="https://github.com/twitter/twemoji" target="_blank" rel="noopener">Twemoji</a>, CC-BY 4.0.</p>
+  </section>
+
+  <section class="panel stepper-panel">
+    <h2>Guided scenario</h2>
+    <div id="stepper-progress" class="stepper-progress"></div>
+    <p id="stepper-desc" class="stepper-desc"></p>
+    <div class="row">
+      <button id="btn-step-run" class="attack">Run this step</button>
+      <button id="btn-step-reset" class="secondary">Reset scenario</button>
+    </div>
+  </section>
+
+  <section id="report-section" class="panel report" hidden>
+    <h2>Session report</h2>
+    <table id="report-table">
+      <thead>
+        <tr><th>Step</th><th>Connection</th><th>Peak cwnd</th><th>Min RTT (ms)</th><th>Mean Mbit/s</th><th>vs. baseline</th><th>Detections</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <p class="small muted">"vs. baseline" = mean throughput of this step ÷ mean throughput of the honest baseline
+      step. "Detections" counts <code>OPTIMISTIC ACK DETECTED</code> log lines during that step's time window.</p>
+  </section>
+
+  <section class="panel stats">
+    <h2>Live numbers</h2>
+    <div class="cards">
+      <div class="card attacker">
+        <h3>attacker connection</h3>
+        <div class="metric"><span id="a-algo">—</span> <span class="label">algo</span></div>
+        <div class="metric"><span id="a-cwnd">—</span> <span class="label">cwnd</span></div>
+        <div class="metric"><span id="a-ssthresh">—</span> <span class="label">ssthresh</span></div>
+        <div class="metric"><span id="a-rtt">—</span> <span class="label">rtt (ms)</span></div>
+        <div class="metric"><span id="a-minrtt">—</span> <span class="label">minrtt (ms)</span></div>
+        <div class="metric"><span id="a-thr">—</span> <span class="label">Mbit/s</span></div>
+      </div>
+      <div class="card observer">
+        <h3>observer (honest) connection</h3>
+        <div class="metric"><span id="o-algo">—</span> <span class="label">algo</span></div>
+        <div class="metric"><span id="o-cwnd">—</span> <span class="label">cwnd</span></div>
+        <div class="metric"><span id="o-ssthresh">—</span> <span class="label">ssthresh</span></div>
+        <div class="metric"><span id="o-rtt">—</span> <span class="label">rtt (ms)</span></div>
+        <div class="metric"><span id="o-minrtt">—</span> <span class="label">minrtt (ms)</span></div>
+        <div class="metric"><span id="o-thr">—</span> <span class="label">Mbit/s</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel charts">
+    <h2>Charts <button id="btn-reset-charts" class="secondary small">reset</button></h2>
+    <div class="chart-box">
+      <h4>Congestion window (segments)</h4>
+      <canvas id="chart-cwnd" width="900" height="180"></canvas>
+    </div>
+    <div class="chart-box">
+      <h4>RTT (ms)</h4>
+      <canvas id="chart-rtt" width="900" height="180"></canvas>
+    </div>
+    <div class="chart-box">
+      <h4>Throughput (Mbit/s)</h4>
+      <canvas id="chart-thr" width="900" height="180"></canvas>
+    </div>
+  </section>
+
+  <section class="panel log">
+    <h2>Server log</h2>
+    <div id="log-box"></div>
+  </section>
+
+  <button id="btn-toggle-advanced" class="secondary" style="margin: 4px 0 16px;">Show advanced / manual controls</button>
+
+  <section id="advanced-controls" class="panel controls" hidden>
+    <h2>Advanced: manual controls</h2>
+    <p class="small muted">The guided scenario above runs these same endpoints automatically. Use this section to
+      poke at the project directly, outside the fixed scenario.</p>
+
+    <h3>Testbed</h3>
+    <div class="row">
+      <button id="btn-up">Bring testbed up</button>
+      <button id="btn-down" class="danger">Tear down</button>
+      <span id="testbed-status" class="status"></span>
+    </div>
+
+    <h3>Server</h3>
+    <div class="row">
+      <label>Congestion control
+        <select id="cc-algo">
+          <option value="cubic" selected>cubic</option>
+          <option value="reno">reno</option>
+          <option value="bbr">bbr (needs host support)</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="defense-on"> Sherwood skip-test defense</label>
+      <button id="btn-server-apply">Apply (recreates server)</button>
+    </div>
+
+    <h3>Link shaping</h3>
+    <div class="row">
+      <label>Delay (ms) <input type="number" id="shape-delay" value="20" min="0"></label>
+      <label>Loss (%) <input type="number" id="shape-loss" value="2" min="0" step="0.5"></label>
+      <button id="btn-shape">Apply shaping</button>
+      <button id="btn-shape-clear" class="secondary">Clear</button>
+      <span id="shape-status" class="status"></span>
+    </div>
+
+    <h3>Honest baseline</h3>
+    <div class="row">
+      <label>Duration (s) <input type="number" id="honest-duration" value="8" min="1"></label>
+      <button id="btn-honest">Run honest pull (observer)</button>
+    </div>
+
+    <h3>Attack</h3>
+    <div class="row">
+      <label><input type="checkbox" id="atk-sack" checked> SACK</label>
+      <label><input type="checkbox" id="atk-ts" checked> Timestamps</label>
+      <label><input type="checkbox" id="atk-lazy"> Lazy variant</label>
+      <label>Duration (s) <input type="number" id="atk-duration" value="10" min="1"></label>
+      <label>Seed (optional) <input type="number" id="atk-seed" placeholder="random"></label>
+      <button id="btn-attack" class="attack">Launch attack</button>
+    </div>
+  </section>
+
+</main>
+
+<script src="/static/topology.js"></script>
+<script src="/static/history.js"></script>
+<script src="/static/stepper.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

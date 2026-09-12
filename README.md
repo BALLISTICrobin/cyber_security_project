@@ -401,6 +401,56 @@ DEFENSE_SEED=42 DEFENSE=on docker compose up -d --force-recreate server
 | M5 — `run_all_gates.sh`, seed reproducibility, final report, demo script | BALLISTICrobin |
 | Cross-cutting — independent verification of every milestone's gate on a second machine, bug fixes (executable bits, M0/M1 pass/fail criteria) | BALLISTICrobin |
 
+## Optional: web dashboard
+
+`dashboard/server.py` is a control-panel UI over this exact project — same
+`docker compose exec ...` commands the scripts above use, just with buttons and live
+charts instead of a terminal and raw `ss -ti` text. Zero third-party dependencies
+(Python stdlib only — nothing to `pip install`); runs on your **host**, not in a
+container, since it needs to invoke `docker compose` itself.
+
+```bash
+docker compose up -d          # testbed must be up first
+python3 dashboard/server.py
+# open http://localhost:8787
+```
+
+### Guided scenario (start here)
+
+The main page walks through the whole project as six fixed steps — Setup, Honest
+baseline, Attack with SACK, Attack without SACK, Enable the defense, Summary — each with
+a "Run this step" button. Every step drives the real backend (the same endpoints the
+manual controls below use), then auto-computes that step's measured results (peak cwnd,
+min RTT, mean throughput, amplification vs. the honest baseline, and any
+`OPTIMISTIC ACK DETECTED` count) into a running **session report table** — a
+self-generating summary of the whole demo, not something you have to read off charts by
+eye.
+
+Above the scenario, a live **network topology view** (Attacker / Server / Observer)
+animates packets flowing between nodes: an upper lane for the bulk data stream and a
+lower lane for ACKs, with dot speed/density driven by the real, currently-polled
+throughput and RTT — denser and faster under the real attack, a modest, realistically-paced
+trickle for the honest connection. This is an **illustrative** animation (it is not a
+literal packet-capture replay — there's no per-packet telemetry to replay), but every
+input driving it is a real live measurement, not a canned/scripted sequence.
+
+The detailed metric cards, raw charts, and manual buttons (CC algorithm, shaping,
+one-off attack/honest runs) are still available under "Show advanced / manual controls"
+for direct exploration outside the fixed scenario.
+
+**Note on the defense step's report row:** `server/defense_server.c` drives its
+connection entirely from a raw socket (it has to, to leave deliberate sequence-number
+gaps a normal kernel socket can't), so it has no kernel TCB and **never appears in
+`ss -ti` at all**. The defense step's report row therefore correctly shows "—" for the
+ss-derived columns (peak cwnd, RTT, throughput) — that's accurate information ("we can't
+observe this via ss"), not missing data — while still correctly counting real
+`OPTIMISTIC ACK DETECTED` events, which come from the server's log output instead.
+
+This is a convenience layer for exploring the project interactively (e.g. in class, or
+for your own understanding) — it is **not** a replacement for the scripted gates above,
+which are what actually prove the project works. Same scope note as everywhere else in
+this repo: only point it at your own isolated `labnet` testbed.
+
 ## Tear down
 
 ```bash
