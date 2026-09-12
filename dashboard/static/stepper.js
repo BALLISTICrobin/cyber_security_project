@@ -5,13 +5,21 @@
 const Stepper = (() => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+  // Throws on ok:false so a failed step (e.g. the testbed isn't up yet, so
+  // `docker compose exec` has nothing to exec into) stops the scenario with
+  // a clear error instead of silently continuing to the next step and
+  // producing a report row with no real data behind it.
   async function post(path, body) {
     const res = await fetch(path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body || {}),
     });
-    return res.json();
+    const json = await res.json();
+    if (json.ok === false) {
+      throw new Error(`${path} failed: ${(json.err || json.error || "unknown error").trim()}`);
+    }
+    return json;
   }
 
   const STEPS = [
@@ -170,23 +178,40 @@ const Stepper = (() => {
 
   async function runStep() {
     if (current >= STEPS.length - 1 && report["summary-shown"]) return;
+    const previous = current;
     current = Math.min(current + 1, STEPS.length - 1);
     renderProgress();
     const step = STEPS[current];
     const btn = document.getElementById("btn-step-run");
     btn.disabled = true;
     btn.textContent = "running...";
-    const t0 = Date.now();
-    await step.run();
-    const t1 = Date.now();
-    if (step.peer) {
-      report[step.id] = statsFor(step.peer, t0, t1 + 200);
-      renderReport();
+    try {
+      const t0 = Date.now();
+      await step.run();
+      const t1 = Date.now();
+      if (step.peer) {
+        report[step.id] = statsFor(step.peer, t0, t1 + 200);
+        renderReport();
+      }
+      if (step.id === "summary") {
+        report["summary-shown"] = true;
+      }
+    } catch (err) {
+      // Roll back to the previous step so the button reads "retry" for the
+      // SAME step rather than silently advancing past a step that didn't
+      // actually run (e.g. the testbed wasn't up yet, so `docker compose
+      // exec` had no container to exec into).
+      current = previous;
+      renderProgress();
+      alert(
+        `Step failed: ${err.message}\n\n` +
+        `Common cause: the testbed isn't up yet -- click "Bring testbed up" ` +
+        `under "Show advanced / manual controls" first, then retry this step.`
+      );
+      console.error(err);
+    } finally {
+      renderCurrent();
     }
-    if (step.id === "summary") {
-      report["summary-shown"] = true;
-    }
-    renderCurrent();
   }
 
   function reset() {

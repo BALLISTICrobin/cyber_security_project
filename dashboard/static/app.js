@@ -205,7 +205,14 @@ wireButton("btn-shape-clear", async () => {
 
 wireButton("btn-honest", async () => {
   const duration = Number(document.getElementById("honest-duration").value);
-  await post("/api/honest/start", { duration });
+  setText("honest-status", "starting...");
+  const r = await post("/api/honest/start", { duration });
+  if (r.ok) {
+    setText("honest-status", `pulling for ${duration}s -- watch the observer card/charts`);
+  } else {
+    setText("honest-status", `FAILED: ${(r.err || r.error || "unknown error").trim()}`);
+    console.error("honest pull failed:", r);
+  }
 });
 
 wireButton("btn-attack", async () => {
@@ -215,7 +222,14 @@ wireButton("btn-attack", async () => {
   const duration = Number(document.getElementById("atk-duration").value);
   const seedRaw = document.getElementById("atk-seed").value;
   const seed = seedRaw === "" ? null : Number(seedRaw);
-  await post("/api/attack/start", { sack, timestamps, lazy, duration, seed });
+  setText("attack-status", "starting...");
+  const r = await post("/api/attack/start", { sack, timestamps, lazy, duration, seed });
+  if (r.ok) {
+    setText("attack-status", `running for ${duration}s -- watch the attacker card/charts`);
+  } else {
+    setText("attack-status", `FAILED: ${(r.err || r.error || "unknown error").trim()}`);
+    console.error("attack failed:", r);
+  }
 });
 
 document.getElementById("btn-reset-charts").addEventListener("click", () => {

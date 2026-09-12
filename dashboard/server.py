@@ -279,11 +279,16 @@ class Handler(BaseHTTPRequestHandler):
                 rc, out, err = dc(["exec", "-T", target, "tc", "qdisc", "del", "dev", "eth0", "root"], timeout=10)
                 with _lock:
                     _state["shaped"] = False
-                self._json({"ok": True, "out": out, "err": err})
+                # "Cannot delete qdisc with handle of zero" (rc != 0) means the
+                # interface was already unshaped -- not a real failure, so we
+                # still report ok:true for that specific, expected message.
+                already_clear = "handle of zero" in err
+                self._json({"ok": rc == 0 or already_clear, "out": out, "err": err})
             elif self.path == "/api/honest/start":
                 duration = int(body.get("duration", 8))
-                dc(["exec", "-d", "observer", "sh", "-c", f"timeout {duration} nc server 5000 > /dev/null"], timeout=10)
-                self._json({"ok": True})
+                rc, out, err = dc(["exec", "-d", "observer", "sh", "-c",
+                                    f"timeout {duration} nc server 5000 > /dev/null"], timeout=10)
+                self._json({"ok": rc == 0, "out": out, "err": err})
             elif self.path == "/api/attack/start":
                 duration = int(body.get("duration", 10))
                 args = ["exec", "-d", "attacker", "/work/attack", "--target", "server",
