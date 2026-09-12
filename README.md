@@ -13,28 +13,35 @@ Full background theory: see [`docs/Optimistic-TCP-ACK-Attacks.pdf`](docs/Optimis
 - Linux host (or Docker Desktop on macOS/Windows) with the `tcp_bbr` kernel module
   available for later milestones (`sysctl net.ipv4.tcp_available_congestion_control`)
 
-## Architecture (Milestone 0)
+## Architecture
 
-Three containers on a dedicated bridge network `labnet` (172.28.0.0/16):
+Four containers, defined in one `docker-compose.yml`:
 
-| Service    | IP           | Role                                      | Capabilities        |
-|------------|--------------|--------------------------------------------|----------------------|
-| `server`   | 172.28.0.10  | Victim / streaming server (later)          | `NET_ADMIN`          |
-| `attacker` | 172.28.0.20  | Misbehaving receiver / attack tool (later) | `NET_RAW`, `NET_ADMIN` |
-| `observer` | 172.28.0.30  | Honest client / dashboard (later)          | `NET_ADMIN`          |
+| Service     | IP           | Network  | Role                                | Capabilities           |
+|-------------|--------------|----------|--------------------------------------|------------------------|
+| `server`    | 172.28.0.10  | `labnet` | Victim / streaming server            | `NET_ADMIN`, `NET_RAW`  |
+| `attacker`  | 172.28.0.20  | `labnet` | Misbehaving receiver / attack tool   | `NET_RAW`, `NET_ADMIN`  |
+| `observer`  | 172.28.0.30  | `labnet` | Honest client                        | `NET_ADMIN`             |
+| `dashboard` | (host only, port `8787`) | default | Web control panel (optional) | none — controls the other three via the Docker socket, not the network |
 
-At M0, all three images were minimal and just proved the network + shaping + measurement
-pipeline works end-to-end. As of M1, `server` runs a real custom TCP streaming server
-(`server/stream_server.c`) with congestion control selectable via the `CC_ALGO`
-environment variable, and `observer`/`attacker` can pull from it with `nc`.
+`server` runs a real custom TCP streaming server (`server/stream_server.c`, or
+`server/defense_server.c` when `DEFENSE=on`) with congestion control selectable via the
+`CC_ALGO` environment variable; `observer`/`attacker` can pull from it with `nc`.
+`dashboard` is a thin control-panel UI over the same commands documented below — see
+[Web dashboard](#web-dashboard) further down for what it adds and, importantly, its own
+security note (mounting the Docker socket is root-equivalent host access).
 
-## Milestone 0 — bring the testbed up
+## Bring everything up (one command)
 
 ```bash
-docker compose build
-docker compose up -d
-docker compose ps
+docker compose up -d --build
+docker compose ps      # expect: attacker, server, observer, dashboard, all "Up"
 ```
+
+This builds and starts **all four containers at once**, including the dashboard —
+open [http://localhost:8787](http://localhost:8787) once it's up. `--build` is only
+needed the first time or after changing a `Dockerfile`/`.c` file; plain `docker compose
+up -d` is enough otherwise.
 
 Sanity-check connectivity:
 
@@ -401,19 +408,48 @@ DEFENSE_SEED=42 DEFENSE=on docker compose up -d --force-recreate server
 | M5 — `run_all_gates.sh`, seed reproducibility, final report, demo script | BALLISTICrobin |
 | Cross-cutting — independent verification of every milestone's gate on a second machine, bug fixes (executable bits, M0/M1 pass/fail criteria) | BALLISTICrobin |
 
-## Optional: web dashboard
+## Web dashboard
 
 `dashboard/server.py` is a control-panel UI over this exact project — same
-`docker compose exec ...` commands the scripts above use, just with buttons and live
-charts instead of a terminal and raw `ss -ti` text. Zero third-party dependencies
-(Python stdlib only — nothing to `pip install`); runs on your **host**, not in a
-container, since it needs to invoke `docker compose` itself.
+`docker compose exec ...` commands documented throughout this README, just with buttons
+and live charts instead of a terminal and raw `ss -ti` text. Zero third-party Python
+dependencies (stdlib only).
+
+**It's part of `docker compose up -d`** (see [above](#bring-everything-up-one-command))
+— no separate command needed:
 
 ```bash
-docker compose up -d          # testbed must be up first
-python3 dashboard/server.py
+docker compose up -d --build
 # open http://localhost:8787
 ```
+
+### How this actually runs: Docker controlling Docker
+
+The `dashboard` container doesn't join `labnet` and never talks to `server`/`attacker`/
+`observer` over the network — it drives them by running `docker compose ...` against the
+**same Docker daemon your host uses**, via two things mounted into it
+(see `docker-compose.yml` and `docker/dashboard/Dockerfile`):
+
+1. `/var/run/docker.sock` — the Docker socket, so the `docker` CLI inside the container
+   talks to your real daemon, not a nested one.
+2. The live project directory, bind-mounted at the **same absolute path** inside the
+   container as on your host (the `${PWD}:${PWD}` trick) — required so that when the
+   dashboard's `docker compose` invocation resolves the compose file and volume paths,
+   they're paths the daemon can actually see.
+
+**⚠️ Security note:** mounting the Docker socket into a container gives that container
+root-equivalent control over your host's Docker (and, effectively, your host) — this is
+a well-known, standard pattern (the same one CI runners like Jenkins/GitLab use to build
+Docker images from inside a job), fine for a personal lab tool you run yourself, but it
+is **not something to expose beyond `localhost`**. Don't publish port 8787 to a network
+or the internet, and don't add this pattern to anything multi-tenant.
+
+Two of the dashboard's own buttons are scoped specifically because of this setup: "Bring
+testbed up" and "Tear down" explicitly target `server attacker observer` by name (never
+a bare `docker compose up -d` / `down`) so that clicking them can't recreate or remove
+the dashboard's own container out from under the page you're looking at — verified
+directly: tearing down via the UI leaves `dashboard` running and reachable, and bringing
+the testbed back up via the UI restores the other three without touching it.
 
 ### Guided scenario (start here)
 
@@ -450,6 +486,142 @@ This is a convenience layer for exploring the project interactively (e.g. in cla
 for your own understanding) — it is **not** a replacement for the scripted gates above,
 which are what actually prove the project works. Same scope note as everywhere else in
 this repo: only point it at your own isolated `labnet` testbed.
+
+## Manual Testing Guide
+
+Two ways to convince yourself (or a grader) this actually works: driving it by hand from
+a terminal (below), or clicking through the dashboard UI (further down). Both exercise
+the *exact same* underlying tools — pick whichever matches how you want to demo it.
+
+### A. Manual testing from the command line
+
+**1. Bring the testbed up and confirm connectivity**
+
+```bash
+docker compose up -d --build
+docker compose exec attacker ping -c 3 server        # expect 0% packet loss
+docker compose logs server                            # "listening on port 5000, CC_ALGO=cubic"
+```
+
+**2. Shape the link and check the honest baseline**
+
+Use loss+delay, not a rate cap — a rate cap on the server's own egress creates local
+back-pressure that hides the attack's effect (see Milestone 2 above for why):
+
+```bash
+docker compose exec server tc qdisc replace dev eth0 root netem delay 20ms loss 2%
+docker compose exec server tc qdisc show dev eth0     # confirm it says "netem ... delay 20ms loss 2%"
+
+docker compose exec -d observer sh -c "timeout 8 nc server 5000 > /dev/null"
+sleep 2
+docker compose exec server ss -ti dst observer
+```
+
+Expect a small `cwnd` (single/low-double digits), `rtt`/`minrtt` around 20ms, and some
+real `retrans` (~2% of segments) — CUBIC honestly respecting real loss on the link.
+
+**3. Launch the attack and compare**
+
+```bash
+docker compose exec -d attacker /work/attack --target server --port 5000 \
+  --duration 10 --sack --timestamps -v
+sleep 4
+docker compose exec server ss -ti dst attacker
+```
+
+Expect `cwnd` in the thousands (vs. the honest run's low double digits), `minrtt`
+collapsed to under 1ms despite the link still genuinely having a 20ms floor, and
+`retrans` barely moving even though the real 2% loss is still happening underneath —
+the server just never finds out, because the attacker's ACKs cover for it. For the
+quantified version of this same comparison:
+
+```bash
+CC_ALGO=cubic ./scripts/run_attack.sh 15 20 2
+```
+
+**4. Prove it's SACK-dependent, not just "the attack works"**
+
+```bash
+docker compose exec -d attacker /work/attack --target server --port 5000 \
+  --duration 10 --timestamps -v        # note: no --sack this time
+sleep 4
+docker compose exec server ss -ti dst attacker
+```
+
+Expect `cwnd` to stay *small* — often smaller than the honest baseline — because without
+SACK, the attacker's overrun-recovery ACKs look like ordinary duplicate ACKs to CUBIC and
+can shrink the window instead of growing it. Seeing both outcomes from the same tool is
+much stronger evidence than either one alone.
+
+**5. Test the defense**
+
+```bash
+DEFENSE=on docker compose up -d --force-recreate server
+docker compose logs -f server &                       # watch for the detection line
+docker compose exec attacker /work/attack --target server --port 5000 --duration 8 --sack
+```
+
+Expect a log line within a couple of seconds:
+`[defense] OPTIMISTIC ACK DETECTED: client acked ..., past skipped segment [...) it never received -- resetting flow`,
+and the attacker's throughput collapsing to near-nothing. Then confirm honest clients are
+unaffected:
+
+```bash
+docker compose exec observer sh -c "nc server 5000 | wc -c"   # should transfer real bytes, and NOT be flagged
+```
+
+Or run all three phases (unchecked / defended / honest) at once with the scripted gate:
+
+```bash
+./scripts/run_defense.sh 8
+```
+
+**6. Clean up**
+
+```bash
+docker compose exec server tc qdisc del dev eth0 root
+docker compose down
+```
+
+**Or run every gate above, end to end, in one shot:**
+
+```bash
+./scripts/run_all_gates.sh
+```
+
+### B. Manual testing via the dashboard UI
+
+```bash
+docker compose up -d --build
+# open http://localhost:8787
+```
+
+**Guided scenario (recommended first pass):** click **"Run this step"** six times in a
+row — Setup → Honest baseline → Attack with SACK → Attack without SACK → Enable the
+defense → Summary. Watch the **Network view** animate (denser/faster packets during the
+attack, a modest realistic trickle for the honest run) and the **Session report** table
+fill in automatically after each step with the real measured numbers (peak cwnd, min
+RTT, mean Mbit/s, amplification vs. baseline, and any detection count) — by the end you
+have the full attack/defense story in one table, generated from live data, not typed in.
+
+**Advanced / manual controls (for poking at it directly):** click **"Show advanced /
+manual controls"** at the bottom of the page to reveal the same controls the guided
+scenario automates, usable independently and in any order:
+
+| Control | What it does | Equivalent CLI command |
+|---|---|---|
+| Testbed: **Bring testbed up** / **Tear down** | Starts/stops `server`, `attacker`, `observer` (never the dashboard itself) | `docker compose up -d server attacker observer` / `docker compose rm -f -s server attacker observer` |
+| Server: CC dropdown + defense checkbox + **Apply** | Recreates `server` with the chosen `CC_ALGO` and `DEFENSE` | `CC_ALGO=<algo> DEFENSE=<on\|off> docker compose up -d --force-recreate server` |
+| Link shaping: delay/loss + **Apply shaping** / **Clear** | Shapes or clears `server`'s egress | `docker compose exec server tc qdisc replace dev eth0 root netem delay <N>ms loss <N>%` |
+| Honest baseline: duration + **Run honest pull** | `observer` pulls from `server` for N seconds | `docker compose exec -d observer sh -c "timeout <N> nc server 5000 > /dev/null"` |
+| Attack: SACK/timestamps/lazy + duration + seed + **Launch attack** | Runs the attack tool with the chosen flags | `docker compose exec -d attacker /work/attack --target server --port 5000 --duration <N> [--sack] [--timestamps] [--lazy] [--seed <N>]` |
+
+While any of these run, the **Live numbers** cards, the three **Charts**, and the
+**Server log** panel (highlighting `OPTIMISTIC ACK DETECTED` / `flow reset` in red) all
+update in real time from the same `ss -ti` polling and log tailing the guided scenario
+uses — so you can, for example, click "Apply shaping", then "Launch attack" with SACK
+off, then immediately re-launch with SACK on, and watch the charts show the difference
+live without following the fixed 6-step order.
 
 ## Tear down
 

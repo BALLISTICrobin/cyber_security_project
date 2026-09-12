@@ -58,3 +58,29 @@ services:
       - ./data:/data
     tty: true
     stdin_open: true
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: docker/dashboard/Dockerfile
+    container_name: dashboard
+    # Deliberately NOT on labnet: the dashboard never talks to server/attacker/
+    # observer over the network -- it drives them via `docker compose exec`
+    # through the Docker socket below, so it doesn't need (and shouldn't have)
+    # direct network access into the attack/defense traffic path.
+    working_dir: ${PWD}
+    volumes:
+      # Docker socket: lets this container run `docker compose ...` against
+      # the SAME daemon the host uses (controls sibling containers).
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Same absolute path inside as outside: required so this container's
+      # `docker compose` CLI resolves the compose file and build contexts to
+      # paths the daemon can actually see (see docker/dashboard/Dockerfile).
+      - ${PWD}:${PWD}
+    ports:
+      - "8787:8787"
+    command: ["python3", "${PWD}/dashboard/server.py"]
+    depends_on:
+      - server
+      - attacker
+      - observer

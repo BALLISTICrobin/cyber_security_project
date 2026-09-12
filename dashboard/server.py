@@ -236,10 +236,17 @@ class Handler(BaseHTTPRequestHandler):
         try:
             body = self._read_json()
             if self.path == "/api/testbed/up":
-                rc, out, err = dc(["up", "-d"], timeout=60)
+                # Named explicitly (not a bare `up -d`): when the dashboard
+                # itself runs as a compose service, an unscoped `up -d` would
+                # target it too and could recreate the very container serving
+                # this request.
+                rc, out, err = dc(["up", "-d", "server", "attacker", "observer"], timeout=60)
                 self._json({"ok": rc == 0, "out": out, "err": err})
             elif self.path == "/api/testbed/down":
-                rc, out, err = dc(["down"], timeout=60)
+                # `rm -f -s` (stop + remove), scoped to the three testbed
+                # services only -- NOT a bare `docker compose down`, which
+                # would also stop/remove the dashboard's own container.
+                rc, out, err = dc(["rm", "-f", "-s", "server", "attacker", "observer"], timeout=60)
                 self._json({"ok": rc == 0, "out": out, "err": err})
             elif self.path == "/api/server/start":
                 cc = body.get("cc_algo", "cubic")
