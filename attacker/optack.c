@@ -259,6 +259,7 @@ int main(int argc, char **argv) {
         .max_ahead = 4u * 1024 * 1024, .interval_ms = 1.0,
     };
     const char *target = "server";
+    long seed = -1;   /* -1 = unset -> time/pid-derived (default, non-reproducible) */
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--target") && i + 1 < argc) target = argv[++i];
@@ -270,16 +271,25 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--timestamps")) c.use_ts = 1;
         else if (!strcmp(argv[i], "--sack")) c.use_sack = 1;
         else if (!strcmp(argv[i], "--log") && i + 1 < argc) c.logpath = argv[++i];
+        else if (!strcmp(argv[i], "--seed") && i + 1 < argc) seed = atol(argv[++i]);
         else if (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--verbose")) c.verbose = 1;
         else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) {
             printf("usage: %s --target <host> --port <p> [--duration s] "
                    "[--maxahead KB] [--interval ms] [--lazy] "
-                   "[--timestamps] [--sack] [--log FILE] [-v]\n", argv[0]);
+                   "[--timestamps] [--sack] [--log FILE] [--seed N] [-v]\n", argv[0]);
             return 0;
         } else {
             fprintf(stderr, "unknown arg: %s\n", argv[i]);
             return 2;
         }
+    }
+    /* M5 reproducibility: --seed (or the ATTACK_SEED env var) pins the
+     * source port and ISN so a run can be exactly repeated; omitted, we fall
+     * back to the original time/pid-derived randomness (real attacks don't
+     * want a predictable source port/ISN, so this is opt-in, not default). */
+    if (seed < 0) {
+        const char *env_seed = getenv("ATTACK_SEED");
+        if (env_seed && *env_seed) seed = atol(env_seed);
     }
 
     /* Resolve target to an IPv4 address. */
@@ -295,7 +305,7 @@ int main(int argc, char **argv) {
     c.src_ip = local_ip_for(c.dst_ip);
     if (!c.src_ip) { fprintf(stderr, "[optack] cannot find local source IP\n"); return 1; }
 
-    srand((unsigned)(getpid() ^ (unsigned)time(NULL)));
+    srand(seed >= 0 ? (unsigned)seed : (unsigned)(getpid() ^ (unsigned)time(NULL)));
     c.src_port = (uint16_t)(20000 + rand() % 40000);
     uint32_t isn = (uint32_t)rand() ^ ((uint32_t)rand() << 16);
 

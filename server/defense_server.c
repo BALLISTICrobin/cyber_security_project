@@ -132,7 +132,13 @@ int main(int argc, char **argv) {
 
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
-    srand((unsigned)(getpid() ^ (unsigned)time(NULL)));
+    /* M5 reproducibility: DEFENSE_SEED pins the ISN so a run can be exactly
+     * repeated; unset falls back to time/pid-derived randomness (the skip
+     * schedule itself is a fixed SKIP_EVERY_S interval already, so this only
+     * affects the ISN, not the defense's detection behavior). */
+    const char *env_seed = getenv("DEFENSE_SEED");
+    srand((env_seed && *env_seed) ? (unsigned)atol(env_seed)
+                                   : (unsigned)(getpid() ^ (unsigned)time(NULL)));
 
     int sfd = socket(AF_INET, SOCK_RAW, IPPROTO_TCP);
     if (sfd < 0) { perror("socket(send)"); return 1; }

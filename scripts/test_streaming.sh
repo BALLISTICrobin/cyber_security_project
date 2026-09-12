@@ -29,7 +29,9 @@ docker compose exec -d observer bash -c "rm -f ${OUTFILE}; timeout ${DURATION} n
 
 sleep 2
 echo "[*] ss -ti on server, mid-stream (should show '${CC_ALGO}'):"
-docker compose exec server ss -ti dst observer
+SS_OUT=$(docker compose exec server ss -ti dst observer)
+echo "${SS_OUT}"
+ACTIVE_ALGO=$(echo "${SS_OUT}" | grep -oE 'cubic|reno|bbr' | head -1 || true)
 
 echo "[*] Waiting for the pull to finish..."
 sleep "$((DURATION - 1))"
@@ -38,9 +40,25 @@ BYTES=$(docker compose exec observer stat -c %s "${OUTFILE}" | tr -d '[:space:]'
 MBIT=$(python3 -c "print(f'{(${BYTES}*8)/(${DURATION}*1e6):.2f}')")
 echo "[*] Received ${BYTES} bytes in ~${DURATION}s  ->  ~${MBIT} Mbit/s"
 
-echo "cc_algo,duration_s,bytes,mbit_s" > /tmp/header.csv
 if [ ! -f data/streaming_results.csv ]; then
-    cp /tmp/header.csv data/streaming_results.csv
+    echo "cc_algo,duration_s,bytes,mbit_s" > data/streaming_results.csv
 fi
 echo "${CC_ALGO},${DURATION},${BYTES},${MBIT}" >> data/streaming_results.csv
 echo "[*] Appended result to data/streaming_results.csv"
+
+# Pass criteria: ss confirms the requested algorithm is active AND throughput
+# is in the expected range for the 10mbit shape. BBR is a known exception --
+# if this host's kernel lacks tcp_bbr, the server gracefully falls back to
+# cubic (see README "Known limitation"), which is correct behavior, not a
+# failure; that comparison can only be made honestly in CI.
+RATE_OK=$(python3 -c "print(1 if 5.0 <= ${MBIT} <= 11.0 else 0)")
+if [ "${CC_ALGO}" = "bbr" ] && [ "${ACTIVE_ALGO}" != "bbr" ]; then
+    echo "RESULT: SKIP (bbr unavailable on this host -- see CI: cc-comparison.yml)"
+    exit 0
+elif [ "${ACTIVE_ALGO}" = "${CC_ALGO}" ] && [ "${RATE_OK}" = "1" ]; then
+    echo "RESULT: PASS"
+    exit 0
+else
+    echo "RESULT: FAIL (active=${ACTIVE_ALGO:-none}, expected=${CC_ALGO}, rate_ok=${RATE_OK})"
+    exit 1
+fi

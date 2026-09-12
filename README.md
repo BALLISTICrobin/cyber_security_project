@@ -356,13 +356,58 @@ server, whose `clsact` hook is available here) is the natural bonus extension;
 its overhead number must be measured on bare metal, since eBPF runs in generic
 mode inside Docker (see `PROJECT_IMPLEMENTATION_PLAN.md`, §1).
 
+## Milestone 5 — reproducibility package, final report, demo
+
+`scripts/run_all_gates.sh` is the project's "cold clone" test: it rebuilds every image,
+brings up the testbed, and re-runs every milestone's gate (M0-M4) in sequence, ending in
+one PASS/FAIL/SKIP summary. This is what "the project is reproducible" actually means —
+not that it worked once on someone's laptop.
+
+```bash
+./scripts/run_all_gates.sh
+```
+
+`SKIP` (not `PASS` or `FAIL`) is expected for the `bbr` rows on any host without the
+`tcp_bbr` kernel module (see the M1/M3 sections above) — that's a documented host
+limitation, resolved via CI, not a project bug.
+
+### Fixed seeds
+
+Both raw-socket tools accept a seed for exact repeatability (source port + initial
+sequence number), on top of their default time/pid-derived randomness:
+
+```bash
+docker compose exec attacker /work/attack --target server --port 5000 --seed 42
+DEFENSE_SEED=42 DEFENSE=on docker compose up -d --force-recreate server
+```
+
+### Final report and demo
+
+- [`docs/FINAL_REPORT.md`](docs/FINAL_REPORT.md) — consolidated results across all
+  milestones, with the actual measured numbers and their significance.
+- [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md) — the rehearsed live-demo walkthrough
+  (honest baseline → attack → quantified inflation → multi-CC figure → defense →
+  reproducibility), with a fallback plan if something breaks live.
+
+### Contributions
+
+| Area | Contributor |
+|---|---|
+| M0 — Dockerized testbed, netem shaping, baseline gate | BALLISTICrobin |
+| M1 — streaming server, per-socket CC selection, BBR host-limitation diagnosis + CI | BALLISTICrobin |
+| M2 — raw-socket attack tool, Scapy prototype, attack gate + CI | sayjad |
+| M3 — CC x timestamps x SACK sweep, dashboard figures, sweep CI | sayjad |
+| M4 — Sherwood skip-test defense server, defense gate + CI | sayjad |
+| M5 — `run_all_gates.sh`, seed reproducibility, final report, demo script | BALLISTICrobin |
+| Cross-cutting — independent verification of every milestone's gate on a second machine, bug fixes (executable bits, M0/M1 pass/fail criteria) | BALLISTICrobin |
+
 ## Tear down
 
 ```bash
 docker compose down
 ```
 
-## Next milestone
+## Project status: complete
 
-M5 — reproducibility package (one-command re-run of every gate), fixed seeds,
-final report, and the live demo. See `PROJECT_IMPLEMENTATION_PLAN.md`.
+All five milestones (M0-M5) from `PROJECT_IMPLEMENTATION_PLAN.md` are implemented and
+independently verified. See `docs/FINAL_REPORT.md` for results.
