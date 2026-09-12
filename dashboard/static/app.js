@@ -203,16 +203,22 @@ wireButton("btn-shape-clear", async () => {
   setText("shape-status", r.ok ? "shaping cleared" : "failed (see console)");
 });
 
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+
 wireButton("btn-honest", async () => {
   const duration = Number(document.getElementById("honest-duration").value);
   setText("honest-status", "starting...");
+  const t0 = Date.now();
   const r = await post("/api/honest/start", { duration });
-  if (r.ok) {
-    setText("honest-status", `pulling for ${duration}s -- watch the observer card/charts`);
-  } else {
+  if (!r.ok) {
     setText("honest-status", `FAILED: ${(r.err || r.error || "unknown error").trim()}`);
     console.error("honest pull failed:", r);
+    return;
   }
+  setText("honest-status", `pulling for ${duration}s -- watch the observer card/charts`);
+  await sleepMs(duration * 1000 + 300);
+  Stepper.recordRun(`Manual: honest pull (${duration}s)`, "observer", t0, Date.now());
+  setText("honest-status", "done -- added to session report below");
 });
 
 wireButton("btn-attack", async () => {
@@ -223,13 +229,18 @@ wireButton("btn-attack", async () => {
   const seedRaw = document.getElementById("atk-seed").value;
   const seed = seedRaw === "" ? null : Number(seedRaw);
   setText("attack-status", "starting...");
+  const t0 = Date.now();
   const r = await post("/api/attack/start", { sack, timestamps, lazy, duration, seed });
-  if (r.ok) {
-    setText("attack-status", `running for ${duration}s -- watch the attacker card/charts`);
-  } else {
+  if (!r.ok) {
     setText("attack-status", `FAILED: ${(r.err || r.error || "unknown error").trim()}`);
     console.error("attack failed:", r);
+    return;
   }
+  setText("attack-status", `running for ${duration}s -- watch the attacker card/charts`);
+  await sleepMs(duration * 1000 + 300);
+  const label = `Manual: attack (${sack ? "SACK" : "no-SACK"}${timestamps ? "" : ", no-TS"}${lazy ? ", lazy" : ""}, ${duration}s)`;
+  Stepper.recordRun(label, "attacker", t0, Date.now());
+  setText("attack-status", "done -- added to session report below");
 });
 
 document.getElementById("btn-reset-charts").addEventListener("click", () => {

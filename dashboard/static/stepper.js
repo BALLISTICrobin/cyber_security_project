@@ -104,7 +104,13 @@ const Stepper = (() => {
   ];
 
   let current = -1;
-  const report = {};
+  let summaryShown = false;
+  // Ordered report rows -- fed by BOTH the guided scenario (runStep, below)
+  // and manual/advanced-control runs (Stepper.recordRun, called from
+  // app.js), so a session mixing both shows up as one continuous table in
+  // the order things actually happened.
+  const rows = [];
+  let lastBaselineThr = null; // most recent observer/honest run's mean Mbit/s
 
   function statsFor(peer, tStartMs, tEndMs) {
     if (!peer) return null;
@@ -156,15 +162,12 @@ const Stepper = (() => {
   function renderReport() {
     const tbody = document.querySelector("#report-table tbody");
     tbody.innerHTML = "";
-    const baselineThr = report["baseline"]?.meanThr;
-    for (const step of STEPS) {
-      const r = report[step.id];
-      if (!r || step.peer === null) continue;
+    for (const r of rows) {
       const tr = document.createElement("tr");
-      const ampl = baselineThr && r.meanThr != null ? r.meanThr / baselineThr : null;
+      const ampl = r.baselineThr && r.meanThr != null ? r.meanThr / r.baselineThr : null;
       tr.innerHTML = `
-        <td>${step.title}</td>
-        <td>${step.peer}</td>
+        <td>${r.title}</td>
+        <td>${r.peer}</td>
         <td>${r.peakCwnd ?? "—"}</td>
         <td>${fmt(r.minRtt, 3)}</td>
         <td>${fmt(r.meanThr)}</td>
@@ -173,11 +176,29 @@ const Stepper = (() => {
       `;
       tbody.appendChild(tr);
     }
-    document.getElementById("report-section").hidden = Object.keys(report).length === 0;
+    document.getElementById("report-section").hidden = rows.length === 0;
+  }
+
+  // Adds one row to the shared report and re-renders. `peer` "observer"
+  // (re-)establishes the reference baseline that later rows' "vs. baseline"
+  // column is computed against -- whether that observer run came from the
+  // guided scenario or a manual "Run honest pull" click.
+  function recordRun(title, peer, tStartMs, tEndMs) {
+    if (!peer) return;
+    const stats = statsFor(peer, tStartMs, tEndMs) || {};
+    let baselineThr;
+    if (peer === "observer") {
+      if (stats.meanThr != null) lastBaselineThr = stats.meanThr;
+      baselineThr = stats.meanThr; // compares to itself -> reads as 1.0x
+    } else {
+      baselineThr = lastBaselineThr;
+    }
+    rows.push({ title, peer, ...stats, baselineThr });
+    renderReport();
   }
 
   async function runStep() {
-    if (current >= STEPS.length - 1 && report["summary-shown"]) return;
+    if (current >= STEPS.length - 1 && summaryShown) return;
     const previous = current;
     current = Math.min(current + 1, STEPS.length - 1);
     renderProgress();
@@ -190,11 +211,10 @@ const Stepper = (() => {
       await step.run();
       const t1 = Date.now();
       if (step.peer) {
-        report[step.id] = statsFor(step.peer, t0, t1 + 200);
-        renderReport();
+        recordRun(step.title, step.peer, t0, t1 + 200);
       }
       if (step.id === "summary") {
-        report["summary-shown"] = true;
+        summaryShown = true;
       }
     } catch (err) {
       // Roll back to the previous step so the button reads "retry" for the
@@ -216,7 +236,9 @@ const Stepper = (() => {
 
   function reset() {
     current = -1;
-    for (const k of Object.keys(report)) delete report[k];
+    summaryShown = false;
+    lastBaselineThr = null;
+    rows.length = 0;
     renderProgress();
     renderCurrent();
     renderReport();
@@ -229,5 +251,5 @@ const Stepper = (() => {
     document.getElementById("btn-step-reset").addEventListener("click", reset);
   }
 
-  return { init };
+  return { init, recordRun };
 })();

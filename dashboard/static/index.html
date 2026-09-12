@@ -49,7 +49,7 @@
     <p id="stepper-desc" class="stepper-desc"></p>
     <div class="row">
       <button id="btn-step-run" class="attack">Run this step</button>
-      <button id="btn-step-reset" class="secondary">Reset scenario</button>
+      <button id="btn-step-reset" class="secondary">Reset scenario + report</button>
     </div>
   </section>
 
@@ -61,8 +61,11 @@
       </thead>
       <tbody></tbody>
     </table>
-    <p class="small muted">"vs. baseline" = mean throughput of this step ÷ mean throughput of the honest baseline
-      step. "Detections" counts <code>OPTIMISTIC ACK DETECTED</code> log lines during that step's time window.</p>
+    <p class="small muted">One shared report for the whole session: guided-scenario steps and manual runs from
+      "Advanced controls" both append rows here, in the order you ran them. "vs. baseline" = this row's mean
+      throughput ÷ the most recently completed honest/observer run's mean throughput (whichever came last, guided
+      or manual). "Detections" counts <code>OPTIMISTIC ACK DETECTED</code> log lines during that row's time window.
+      "Reset scenario + report" clears this table.</p>
   </section>
 
   <section class="panel stats">
