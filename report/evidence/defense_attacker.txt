@@ -1,0 +1,4 @@
+[optack] 172.28.0.20:45946  ->  172.28.0.10:5000   (mode=optimistic, isn=1498552097)
+[optack] note: server did not negotiate timestamps; continuing without them
+[optack] connection established, streaming begins
+[optack] done: 8.0s, 7996 ACKs sent, 2502440 bytes seen (2.49 Mbit/s received), final optimism +0 bytes

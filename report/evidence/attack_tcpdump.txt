@@ -1,0 +1,12 @@
+06:58:16.138312 IP 172.28.0.20.25879 > 172.28.0.10.5000: Flags [.], ack 1401273438, win 65535, options [nop,nop,TS val 688703 ecr 1391095000], length 0
+06:58:16.139308 IP 172.28.0.20.25879 > 172.28.0.10.5000: Flags [.], ack 1, win 65535, options [nop,nop,TS val 688704 ecr 1391095000], length 0
+06:58:16.141311 IP 172.28.0.20.25879 > 172.28.0.10.5000: Flags [.], ack 1, win 65535, options [nop,nop,TS val 688706 ecr 1391095000], length 0
+06:58:16.142308 IP 172.28.0.20.25879 > 172.28.0.10.5000: Flags [.], ack 1, win 65535, options [nop,nop,TS val 688707 ecr 1391095000], length 0
+06:58:16.143308 IP 172.28.0.20.25879 > 172.28.0.10.5000: Flags [.], ack 1, win 65535, options [nop,nop,TS val 688708 ecr 1391095000], length 0
+06:58:16.144308 IP 172.28.0.20.25879 > 172.28.0.10.5000: Flags [.], ack 1, win 65535, options [nop,nop,TS val 688709 ecr 1391095000], length 0
+06:58:16.145308 IP 172.28.0.20.25879 > 172.28.0.10.5000: Flags [.], ack 1, win 65535, options [nop,nop,TS val 688710 ecr 1391095000], length 0
+06:58:16.146309 IP 172.28.0.20.25879 > 172.28.0.10.5000: Flags [.], ack 1, win 65535, options [nop,nop,TS val 688711 ecr 1391095000], length 0
+06:58:16.147309 IP 172.28.0.20.25879 > 172.28.0.10.5000: Flags [.], ack 1, win 65535, options [nop,nop,TS val 688712 ecr 1391095000], length 0
+06:58:16.148309 IP 172.28.0.20.25879 > 172.28.0.10.5000: Flags [.], ack 1, win 65535, options [nop,nop,TS val 688713 ecr 1391095000], length 0
+06:58:16.149317 IP 172.28.0.20.25879 > 172.28.0.10.5000: Flags [.], ack 1, win 65535, options [nop,nop,TS val 688714 ecr 1391095000], length 0
+06:58:16.150311 IP 172.28.0.20.25879 > 172.28.0.10.5000: Flags [.], ack 1, win 65535, options [nop,nop,TS val 688715 ecr 1391095000], length 0

@@ -1,0 +1,3 @@
+State Recv-Q Send-Q  Local Address:Port Peer Address:Port Process
+ESTAB 0      3023424   172.28.0.10:5000  172.28.0.30:60838
+	 cubic wscale:7,7 rto:222 rtt:21.52/0.606 mss:1448 pmtu:1500 rcvmss:536 advmss:1448 cwnd:3 ssthresh:3 bytes_sent:42433792 bytes_retrans:809432 bytes_acked:41620016 segs_out:29311 segs_in:442 data_segs_out:29311 send 1614870bps lastsnd:10 lastrcv:3116 lastack:10 pacing_rate 1937808bps delivery_rate 1092720bps delivered:28750 busy:3116ms rwnd_limited:120ms(3.9%) unacked:3 retrans:0/559 rcv_space:14480 rcv_ssthresh:64088 notsent:3019080 minrtt:20 snd_wnd:4785152

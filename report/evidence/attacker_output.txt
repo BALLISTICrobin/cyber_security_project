@@ -1,0 +1,16 @@
+[optack] 172.28.0.20:25879  ->  172.28.0.10:5000   (mode=optimistic, isn=55018294)
+[optack] connection established (timestamps on), streaming begins
+[optack] t=1.0s recv=111.60 MB ack-ahead=18KB acks=1000
+[optack] t=2.0s recv=231.80 MB ack-ahead=2KB acks=2000
+[optack] t=3.0s recv=313.39 MB ack-ahead=9KB acks=3000
+[optack] t=4.0s recv=419.82 MB ack-ahead=580KB acks=4000
+[optack] t=5.0s recv=560.72 MB ack-ahead=450KB acks=5000
+[optack] t=6.0s recv=700.73 MB ack-ahead=237KB acks=6000
+[optack] t=7.0s recv=850.89 MB ack-ahead=66KB acks=7000
+[optack] t=8.0s recv=983.02 MB ack-ahead=60KB acks=8000
+[optack] t=9.0s recv=1116.58 MB ack-ahead=19KB acks=9000
+[optack] t=10.0s recv=1235.22 MB ack-ahead=29KB acks=10000
+[optack] t=11.0s recv=1362.03 MB ack-ahead=0KB acks=11000
+[optack] t=12.0s recv=1454.77 MB ack-ahead=0KB acks=12000
+[optack] t=13.0s recv=1569.06 MB ack-ahead=0KB acks=13000
+[optack] t=14.0s recv=1677.19 MB ack-ahead=0KB acks=14000

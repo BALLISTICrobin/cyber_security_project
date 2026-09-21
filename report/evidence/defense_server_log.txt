@@ -1,0 +1,4 @@
+[defense] listening on port 5000, skip-test defense ENABLED
+[defense] client 172.28.0.20:45946 connected
+[defense] OPTIMISTIC ACK DETECTED: client acked 54195439, past skipped segment [50808239,50809699) it never received -- resetting flow
+[defense] flow reset after 2500980 bytes
